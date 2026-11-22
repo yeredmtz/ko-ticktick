@@ -220,7 +220,8 @@ eq("detail: priority", detail.item_table[4].mandatory, "High")
 eq("detail: list", detail.item_table[5].mandatory, "Work")
 eq("detail: done subtask", detail.item_table[6].text, BOX_DONE .. "Draft")
 eq("detail: open subtask", detail.item_table[7].text, BOX .. "Send")
-eq("detail: complete row", detail.item_table[8].text, CHECK .. "Mark as complete")
+eq("detail: add subtask row", detail.item_table[8].text, "\239\129\167  Add subtask")
+eq("detail: complete row", detail.item_table[9].text, CHECK .. "Mark as complete")
 has("detail: due has the calendar icon", detail.item_table[3].text, "\239\129\179  Due")
 local requests_before = #mocks.requests
 detail:tap(6) -- a checklist row from a cache without item ids: asks for a sync, sends nothing
@@ -938,10 +939,69 @@ eq("offline item uploaded", ck.items[3].title, "Bread")
 eq("offline item uploaded ticked", ck.items[3].status, 1)
 check("temporary id never sent", not tostring(ck.items[3].id):find("local:", 1, true))
 mocks.clearInfos()
--- a plain task (no checklist) does not offer it
+-- a plain task with notes becomes a checklist task, and its notes are kept where TickTick shows them
+local plain = server.tasks.home[#server.tasks.home - 1] -- "Plain thing"
+eq("(setup) plain thing", plain.title, "Plain thing")
+plain.content, plain.kind = "keep these notes", "TEXT"
+list:tap(1)
+mocks.clearInfos()
 list:tap(taskRow("Plain thing"))
-eq("plain task: no Add checklist item", mocks.rowIndex(menu(), "\239\129\167  Add checklist item"), nil)
-menu():close()
+detail = menu()
+has("plain task shows its notes", detail.item_table[2].text, "keep these notes")
+detail:tap(mocks.rowIndex(detail, "\239\129\167  Add checklist item"))
+submit(mocks.find("input"), "Step one")
+local conv = server.updates[#server.updates]
+eq("converts the task", conv.kind, "CHECKLIST")
+eq("copies the notes to desc", conv.desc, "keep these notes")
+eq("sends the item", conv.items[1].title, "Step one")
+has("notes still shown after converting", detail.item_table[2].text, "keep these notes")
+check("item shown", mocks.rowIndex(detail, BOX .. "Step one") ~= nil)
+eq("notes now edited in desc", require("ticktick_model").notesField(plugin:findCachedTask("h9")), "desc")
+detail:tap(mocks.rowIndex(detail, "\239\129\167  Add checklist item"))
+submit(mocks.find("input"), "Step two")
+eq("second item: no second conversion", server.updates[#server.updates].kind, nil)
+detail:close()
+mocks.clearInfos()
+
+-- ---- real subtasks ------------------------------------------------------------------------------------------
+list:tap(taskRow("Plain thing"))
+detail = menu()
+detail:tap(mocks.rowIndex(detail, "\239\129\167  Add subtask"))
+eq("subtask dialog", mocks.find("input").title, "New subtask of: Plain thing")
+submit(mocks.find("input"), "Child A")
+local child = server.created[#server.created]
+eq("subtask created with its parent", child.parentId, "h9")
+eq("subtask in the parent's list", child.projectId, "home")
+local i_child = mocks.rowIndex(detail, "\239\133\137  " .. BOX .. "Child A")
+check("parent's screen lists the subtask", i_child ~= nil)
+detail:tap(i_child)
+has("subtask screen links to its parent", detail.item_table[mocks.rowIndex(detail, "\239\133\136  Subtask of")].text, "Plain thing")
+detail:tap(mocks.rowIndex(detail, "\239\133\136  Subtask of"))
+eq("back on the parent", detail.item_table[1].text, BOX .. "Plain thing")
+detail:close()
+local i_parent, i_kid = taskRow("Plain thing"), taskRow("Child A")
+eq("list: subtask right under its parent", i_kid, i_parent + 1)
+has("list: subtask indented", list.item_table[i_kid].text, "      " .. BOX)
+mocks.clearInfos()
+-- offline: a task and its subtask, added before either uploads
+mocks.net.online, mocks.net.can_connect = false, false
+list:tap(2)
+submit(mocks.find("input"), "Offline parent")
+mocks.clearInfos()
+list:tap(taskRow("Offline parent"))
+detail = menu()
+detail:tap(mocks.rowIndex(detail, "\239\129\167  Add subtask"))
+submit(mocks.find("input"), "Offline child")
+detail:close()
+mocks.clearInfos()
+eq("both queued", #plugin:pendingList(), 2)
+mocks.net.online, mocks.net.can_connect = true, true
+list:tap(1)
+local op, oc = server.created[#server.created - 1], server.created[#server.created]
+eq("parent uploaded first", op.title, "Offline parent")
+eq("child names the parent's real id", oc.parentId, op.id)
+eq("queue empty", #plugin:pendingList(), 0)
+mocks.clearInfos()
 list:close()
 
 -- ---- Inbox not set up: the home screen says so and offers to fix it ----------------------------------------------

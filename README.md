@@ -57,7 +57,8 @@ Tip: for zero menu taps, assign a gesture: **Settings → Taps and gestures → 
 - Tap **List** to move the task to another list (the Inbox or any list you show).
 - Tap **Due** for: change the date (a timed task keeps its time), set or change a time, make it all day again, or remove the due date. Tap **Priority** to choose None, Low, Medium or High. Tap **Notes** to edit them in a full-screen editor (Save keeps the editor open, Close leaves it).
 - **Mark as complete** completes the task and returns to the list.
-- Tap a **checklist item** to tick or untick it. When online, the newest checklist is fetched first, so a change made on your phone is kept. **Add checklist item** adds to a task that already has a checklist (also offline). Checklists downloaded by an older version need one sync first. A single task with more than 200 checklist items cannot have its checklist edited here (the limit is items inside one task, not tasks in a list).
+- Tap a **checklist item** to tick or untick it. When online, the newest checklist is fetched first, so a change made on your phone is kept. **Add checklist item** works on any task (also offline). A plain task becomes a checklist task, and its notes are copied to where TickTick shows them for checklist tasks, so nothing disappears.
+- **Subtasks:** TickTick's real subtasks (tasks inside a task) are listed on their parent's screen and indented under it in lists. Tap **Add subtask** to create one; a subtask's screen links back to its parent. Checklists downloaded by an older version need one sync first. A single task with more than 200 checklist items cannot have its checklist edited here (the limit is items inside one task, not tasks in a list).
 
 **Notes and checklists:** TickTick keeps the notes of ordinary tasks in one field and the description of checklist tasks in another. The plugin edits whichever applies, so what you see here is what you see in the phone app.
 
@@ -85,7 +86,7 @@ Tip: for zero menu taps, assign a gesture: **Settings → Taps and gestures → 
 
 ## Not yet tested on a real Kindle
 
-The logic is tested (168 tests), and the full flows are tested against mocked KOReader screens and a fake TickTick server (376 tests): sidebar, lists, task screen, title and notes edits online and offline, merged edits, failed uploads, and the Inbox. The OAuth script is tested against a fake server. What has not been run is the plugin inside real KOReader on a real Kindle, and the real TickTick API. On first run, check:
+The logic is tested (178 tests), and the full flows are tested against mocked KOReader screens and a fake TickTick server (397 tests): sidebar, lists, task screen, title and notes edits online and offline, merged edits, failed uploads, and the Inbox. The OAuth script is tested against a fake server. What has not been run is the plugin inside real KOReader on a real Kindle, and the real TickTick API. On first run, check:
 
 1. **Tools → TickTick** opens a task list. If not, look at `koreader/crash.log`.
 2. Tap **Sync now**; the counts fill in. If it says it could not reach TickTick, check Wi-Fi and the clock.

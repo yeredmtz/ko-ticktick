@@ -175,6 +175,33 @@ function Model.orderProjects(projects)
     return entries
 end
 
+--- Put subtasks right under their parent (when the parent is in the same view).
+-- Sets r.depth (0 = top level) on each row. Order is otherwise kept.
+function Model.nestSubtasks(rows)
+    local present, children, top = {}, {}, {}
+    for i, r in ipairs(rows) do present[r.task.id] = true end
+    for i, r in ipairs(rows) do
+        local pid = r.task.parent_id
+        if pid and pid ~= r.task.id and present[pid] then
+            children[pid] = children[pid] or {}
+            table.insert(children[pid], r)
+        else
+            top[#top + 1] = r
+        end
+    end
+    local out, seen = {}, {}
+    local function add(r, depth)
+        if seen[r] then return end
+        seen[r] = true
+        r.depth = depth
+        out[#out + 1] = r
+        for i, c in ipairs(children[r.task.id] or {}) do add(c, depth + 1) end
+    end
+    for i, r in ipairs(top) do add(r, 0) end
+    for i, r in ipairs(rows) do add(r, 0) end -- anything caught in a parent loop
+    return out
+end
+
 --- Does a task mention `query` (any case) in its title, notes or checklist?
 function Model.matches(task, query)
     query = (query or ""):lower()
@@ -244,6 +271,8 @@ function Model.slimTask(t, project_name)
         subtasks_done = subtasks_done,
         checklist = list,
         checklist_truncated = list_cut,
+        kind = str(t.kind), -- "TEXT" or "CHECKLIST": decides where notes live
+        parent_id = str(t.parentId), -- set on subtasks
     }
 end
 
@@ -298,8 +327,24 @@ end
 --- Which API field holds a task's notes: checklist tasks keep them in `desc`,
 -- ordinary tasks in `content`.
 function Model.notesField(task)
-    if (task.subtasks or 0) > 0 then return "desc" end
+    if task.kind == "CHECKLIST" then return "desc" end
+    if task.kind == "TEXT" then return "content" end
+    if (task.subtasks or 0) > 0 then return "desc" end -- cache from before `kind` was kept
     return "content"
+end
+
+--- Fields that add a checklist item. A plain task becomes a checklist task, and
+-- since TickTick then shows `desc` instead of `content`, its notes are copied over
+-- (verified on a live account: items alone switch the kind but leave desc empty).
+function Model.addChecklistFields(task, list)
+    local fields = { items = Model.itemsFromChecklist(list) }
+    if Model.notesField(task) == "content" then
+        fields.kind = "CHECKLIST"
+        if task.content and task.content ~= "" and (task.desc or "") == "" then
+            fields.desc = task.content
+        end
+    end
+    return fields
 end
 
 function Model.notesOf(task)

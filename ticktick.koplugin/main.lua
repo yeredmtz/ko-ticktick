@@ -54,6 +54,8 @@ local ICON = {
     folder_open = "\239\129\188", -- U+F07C folder-open
     search = "\239\128\130",   -- U+F002 search
     clock = "\239\128\151",    -- U+F017 clock-o
+    subtask = "\239\133\137",  -- U+F149 level-down
+    up = "\239\133\136",       -- U+F148 level-up
     inbox = "\239\128\156",    -- U+F01C inbox
     today = "\239\137\180",    -- U+F274 calendar-check-o
     tomorrow = "\239\137\177", -- U+F271 calendar-plus-o
@@ -401,6 +403,9 @@ function TickTick:adoptCreatedTask(local_id, created)
     for k in pairs(t) do t[k] = nil end
     for k, v in pairs(created) do t[k] = v end
     t.project = self:projectName(t.project_id) or t.project
+    for i, other in ipairs(self:cachedTasks() or {}) do -- its subtasks now name the real id
+        if other.parent_id == local_id then other.parent_id = created.id end
+    end
 end
 
 --- Upload queued changes. Stops at the first network/auth failure; other
@@ -415,7 +420,8 @@ function TickTick:flushPending(client)
     local stop_kind, stop_detail
     local soft_kind, soft_detail
     for idx, p in ipairs(pending) do
-        if stop_kind or (isLocalId(p.task_id) and p.op ~= "create") then
+        if stop_kind or (isLocalId(p.task_id) and p.op ~= "create")
+                or (p.op == "create" and isLocalId(p.fields and p.fields.parentId)) then
             -- (a change to a task whose create has not uploaded waits for it)
             remaining[#remaining + 1] = p
         else
@@ -428,6 +434,7 @@ function TickTick:flushPending(client)
                     self:adoptCreatedTask(p.task_id, created)
                     for j, q in ipairs(pending) do
                         if q ~= p and q.task_id == p.task_id then q.task_id = created.id end
+                        if q.fields and q.fields.parentId == p.task_id then q.fields.parentId = created.id end
                     end
                 end
             elseif p.op == "delete" then
@@ -820,9 +827,11 @@ function TickTick:buildItems(mode)
         { text = ICON.plus .. "  " .. _("Add task"), add_row = true },
     }
     items[#items + 1] = self:noDataRow()
+    rows = Model.nestSubtasks(rows)
     for i, r in ipairs(rows) do
         items[#items + 1] = {
-            text = ICON.box .. "  " .. Model.priorityMark(r.task.priority) .. Model.displayName(r.task.title),
+            text = string.rep(INDENT, r.depth or 0) .. ICON.box .. "  "
+                .. Model.priorityMark(r.task.priority) .. Model.displayName(r.task.title),
             mandatory = Model.dueLabel(r.info),
             bold = r.tier == 0 or nil,
             task = r.task,
@@ -1200,14 +1209,30 @@ function TickTick:addTask()
     }
 end
 
+function TickTick:addSubtask(parent)
+    self:showInput{
+        title = T(_("New subtask of: %1"), Model.displayName(parent.title)),
+        hint = _("Subtask title"),
+        save_text = _("Add"),
+        on_save = function(value)
+            value = (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if value == "" then return end
+            self:createTask(value, parent.project_id, nil, { parentId = parent.id })
+        end,
+    }
+end
+
 --- Add a task: shown at once, queued, uploaded right away if online.
-function TickTick:createTask(title, project_id, due)
+-- `extra` holds more API fields, e.g. {parentId = ...} for a subtask.
+function TickTick:createTask(title, project_id, due, extra)
     local id = newLocalId()
     local fields = { title = title }
     for k, v in pairs(due or {}) do fields[k] = v end
+    for k, v in pairs(extra or {}) do fields[k] = v end
     local task = Model.slimTask({
         id = id, projectId = project_id, title = title, priority = 0, status = 0,
         dueDate = fields.dueDate, startDate = fields.startDate, isAllDay = fields.isAllDay,
+        parentId = fields.parentId,
     }, self:projectName(project_id))
     local tasks = self:cachedTasks() or {}
     tasks[#tasks + 1] = task
@@ -1318,12 +1343,36 @@ function TickTick:detailItems(task)
             action = function() self:toggleChecklistItem(task, item_id) end,
         }
     end
-    if (task.subtasks or 0) > 0 and Model.checklistEditable(task) then
+    if Model.checklistEditable(task) then
         items[#items + 1] = {
             text = ICON.plus .. "  " .. _("Add checklist item"),
             action = function() self:addChecklistItem(task) end,
         }
     end
+    -- Real subtasks (separate tasks with this one as parent), and the parent of a subtask.
+    local parent = task.parent_id and self:findCachedTask(task.parent_id)
+    if parent then
+        items[#items + 1] = {
+            text = ICON.up .. "  " .. T(_("Subtask of: %1"), Model.displayName(parent.title)),
+            action = function() self:openDetail(parent) end,
+        }
+    end
+    local gone = self:pendingCompleteIds()
+    for i, child in ipairs(self:cachedTasks() or {}) do
+        if child.parent_id == task.id and child.status == 0 and not gone[child.id] then
+            items[#items + 1] = {
+                text = ICON.subtask .. "  " .. ICON.box .. "  " .. Model.displayName(child.title),
+                mandatory = _("Subtask"),
+                action = function(pos)
+                    if onCheckbox(pos) then self:completeTask(child, { undo = true }) else self:openDetail(child) end
+                end,
+            }
+        end
+    end
+    items[#items + 1] = {
+        text = ICON.plus .. "  " .. _("Add subtask"),
+        action = function() self:addSubtask(task) end,
+    }
     items[#items + 1] = {
         text = ICON.check .. "  " .. _("Mark as complete"), bold = true,
         action = function() self:confirmComplete(task) end,
@@ -1435,6 +1484,7 @@ function TickTick:toggleChecklistItem(task, item_id)
             for i, t in ipairs({ task, cached or task }) do
                 t.checklist, t.subtasks, t.subtasks_done = fresh.checklist, fresh.subtasks, fresh.subtasks_done
                 t.checklist_truncated = fresh.checklist_truncated
+                t.kind = fresh.kind or t.kind
             end
             if not Model.checklistEditable(task) then
                 self:refreshDetail()
@@ -1519,8 +1569,8 @@ function TickTick:pickDueTime(task, parts, offset)
     })
 end
 
---- Add an item to a task's checklist (only tasks that already have one: turning a
--- plain task into a checklist changes where TickTick keeps its notes).
+--- Add an item to a task's checklist. A plain task becomes a checklist task with its
+-- notes kept (see Model.addChecklistFields).
 function TickTick:addChecklistItem(task)
     self:showInput{
         title = _("New checklist item"),
@@ -1532,7 +1582,7 @@ function TickTick:addChecklistItem(task)
             local list = {}
             for i, it in ipairs(task.checklist or {}) do list[i] = it end
             list[#list + 1] = { id = newLocalId(), title = value, done = false, status = 0 }
-            self:saveEdit(task, { items = Model.itemsFromChecklist(list) }, true)
+            self:saveEdit(task, Model.addChecklistFields(task, list), true)
         end,
     }
 end
@@ -1597,6 +1647,7 @@ function TickTick:editNotes(task)
             local cached = self:findCachedTask(task.id)
             for i, t in ipairs({ task, cached or task }) do
                 t.content, t.desc, t.content_truncated = fresh.content, fresh.desc, fresh.content_truncated
+                t.kind = fresh.kind or t.kind
             end
             self.state:flush()
             if fresh.content_truncated then

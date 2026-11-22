@@ -367,5 +367,27 @@ local searched = Model.visibleTasks({ { id = "1", title = "Bank", status = 0, pr
     { id = "2", title = "Milk", status = 0, priority = 0, sort_order = 0 } }, { kind = "search", query = "bank" }, now25, -300)
 eq("search mode filters", #searched, 1)
 
+-- ---- notes field by kind, converting to a checklist, nesting subtasks ----
+eq("checklist kind uses desc", Model.notesField({ kind = "CHECKLIST", subtasks = 0 }), "desc")
+eq("text kind uses content", Model.notesField({ kind = "TEXT", subtasks = 3 }), "content")
+eq("unknown kind falls back to items", Model.notesField({ subtasks = 2 }), "desc")
+local cf = Model.addChecklistFields({ kind = "TEXT", content = "n" }, { { title = "a" } })
+eq("convert: kind", cf.kind, "CHECKLIST")
+eq("convert: notes copied", cf.desc, "n")
+local cf2 = Model.addChecklistFields({ kind = "CHECKLIST", desc = "d" }, { { title = "a" } })
+eq("already a checklist: no kind sent", cf2.kind, nil)
+eq("already a checklist: desc untouched", cf2.desc, nil)
+local cf3 = Model.addChecklistFields({ kind = "TEXT" }, { { title = "a" } })
+eq("no notes: nothing copied", cf3.desc, nil)
+local nest = Model.nestSubtasks({
+    { task = { id = "c", parent_id = "p" } }, { task = { id = "x" } }, { task = { id = "p" } },
+    { task = { id = "o", parent_id = "missing" } },
+})
+local ids = {}
+for i, r in ipairs(nest) do ids[#ids + 1] = r.task.id .. r.depth end
+eq("subtask follows its parent; orphans stay top level", table.concat(ids, " "), "x0 p0 c1 o0")
+local loop = Model.nestSubtasks({ { task = { id = "a", parent_id = "b" } }, { task = { id = "b", parent_id = "a" } } })
+eq("parent loop loses nothing", #loop, 2)
+
 print(string.format("logic tests: %d passed, %d failed", passed, failures))
 return failures
