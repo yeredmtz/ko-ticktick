@@ -9,3 +9,6 @@ __pycache__/
 ticktick.lua
 ticktick_state.lua
 *.lua.old
+
+# Local working notes for Claude (not published)
+CLAUDE.md
