@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Config and state written by get_token.py / the plugin: they hold your access token
+ticktick.lua
+ticktick_state.lua
+*.lua.old
