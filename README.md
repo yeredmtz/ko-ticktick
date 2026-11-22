@@ -93,3 +93,7 @@ The logic is tested (158 tests), and the full flows are tested against mocked KO
 8. "Today" matches what TickTick shows. If it is off by a day around midnight, set the time zone offset (Settings → Time zone).
 
 If something fails, send me the message on screen and the last lines of `crash.log`.
+
+## License
+
+AGPL-3.0, the same license as KOReader. See [LICENSE](LICENSE).
