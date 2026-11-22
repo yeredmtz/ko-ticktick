@@ -137,6 +137,57 @@ end
 
 -- Priority: TickTick uses 0 none, 1 low, 3 medium, 5 high.
 Model.PRIORITIES = { 0, 1, 3, 5 }
+
+--- Lists in TickTick's sidebar order, folders kept together.
+-- @param projects array of {id, name, group_id?, sort_order?, extra?} (extra = the Inbox; skipped)
+-- @return array of entries: {list = project} or {folder = group_id, lists = {project, ...}}.
+--   Lists are ordered by sortOrder (lowest first); a folder sits where its first list
+--   would. Lists without a sortOrder (cache from an older version) keep their order.
+function Model.orderProjects(projects)
+    local entries, folders, index = {}, {}, {}
+    for i, p in ipairs(projects or {}) do
+        if not p.extra then
+            index[p] = i
+            local gid = p.group_id
+            if gid then
+                local f = folders[gid]
+                if not f then
+                    f = { folder = gid, lists = {} }
+                    folders[gid] = f
+                    entries[#entries + 1] = f
+                end
+                f.lists[#f.lists + 1] = p
+            else
+                entries[#entries + 1] = { list = p }
+            end
+        end
+    end
+    local function before(a, b)
+        local ka, kb = a.sort_order or 0, b.sort_order or 0
+        if ka ~= kb then return ka < kb end
+        return index[a] < index[b]
+    end
+    for i, e in ipairs(entries) do
+        if e.folder then table.sort(e.lists, before) end
+    end
+    local function first(e) return e.list or e.lists[1] end
+    table.sort(entries, function(a, b) return before(first(a), first(b)) end)
+    return entries
+end
+
+--- Does a task mention `query` (any case) in its title, notes or checklist?
+function Model.matches(task, query)
+    query = (query or ""):lower()
+    if query == "" then return false end
+    local function has(text)
+        return type(text) == "string" and text:lower():find(query, 1, true) ~= nil
+    end
+    if has(task.title) or has(task.content) or has(task.desc) then return true end
+    for i, it in ipairs(task.checklist or {}) do
+        if has(it.title) then return true end
+    end
+    return false
+end
 function Model.priorityMark(p)
     if p == 5 then return "!!! " elseif p == 3 then return "!! " elseif p == 1 then return "! " end
     return ""
@@ -221,6 +272,8 @@ function Model.checklistFromItems(items)
 end
 
 --- Slim checklist -> API `items` array (status 1 = done, 0 = not done).
+-- Items added on the device carry a temporary "local:" id until TickTick gives them
+-- a real one; Client:updateTask leaves those ids out of the request.
 function Model.itemsFromChecklist(list)
     local items = {}
     for i, it in ipairs(list or {}) do
@@ -410,6 +463,8 @@ function Model.visibleTasks(tasks, mode, now, offset_min, skip, excluded)
                 keep = true
             elseif kind == "project" then
                 keep = t.project_id == wanted_project
+            elseif kind == "search" then
+                keep = Model.matches(t, mode.query)
             elseif not info then
                 keep = false
             elseif kind == "week" then

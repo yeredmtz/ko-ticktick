@@ -36,6 +36,7 @@ local Screen = Device.screen
 local DRAWER_WIDTH = 0.8 -- share of the screen width the sidebar covers
 local CHECKBOX_ZONE = 0.15 -- a tap in this share of a row, from the left, hits its checkbox
 local UNDO_SECONDS = 5 -- how long "Undo" is offered after ticking a checkbox
+local INDENT = "      " -- lists inside a folder are drawn indented under it
 
 -- Icons from the Font Awesome set in KOReader's nerdfonts/symbols.ttf (a fallback
 -- font, so they draw on any device). Written as UTF-8 bytes to stay Lua 5.1 compatible.
@@ -49,6 +50,10 @@ local ICON = {
     check = "\239\128\140",    -- U+F00C check
     plus = "\239\129\167",     -- U+F067 plus
     trash = "\239\135\184",    -- U+F1F8 trash
+    folder = "\239\129\187",   -- U+F07B folder
+    folder_open = "\239\129\188", -- U+F07C folder-open
+    search = "\239\128\130",   -- U+F002 search
+    clock = "\239\128\151",    -- U+F017 clock-o
     inbox = "\239\128\156",    -- U+F01C inbox
     today = "\239\137\180",    -- U+F274 calendar-check-o
     tomorrow = "\239\137\177", -- U+F271 calendar-plus-o
@@ -436,6 +441,11 @@ function TickTick:flushPending(client)
             end
             if ok then
                 if removesTask(p) then self:dropCachedTask(p.task_id) end
+                if p.op == "update" and p.fields and p.fields.items and type(ok) == "table" and type(ok.items) == "table" then
+                    -- TickTick's reply carries ids for checklist items added on the device.
+                    local t = self:findCachedTask(p.task_id)
+                    if t then Model.applyFields(t, { items = ok.items }) end
+                end
                 if p.op == "move" then
                     -- Other queued changes to this task must now name its new list.
                     for j, q in ipairs(pending) do
@@ -591,6 +601,9 @@ end
 
 --- The name to show for a list, looked up fresh so a rename in TickTick shows after a sync.
 function TickTick:modeTitle(mode)
+    if mode.kind == "search" then
+        return T(_("Search: %1"), mode.query or "")
+    end
     if mode.kind ~= "project" then
         return SMART_TITLES[mode.kind] or mode.kind
     end
@@ -621,6 +634,62 @@ end
 -- button at the top left of a task list, like the phone app.
 -- ---------------------------------------------------------------------------
 
+--- A folder's name. TickTick's API does not share folder names, so they are set on the device.
+function TickTick:folderName(group_id)
+    local names = self.state:readSetting("folder_names") or {}
+    return names[group_id] or _("Folder")
+end
+
+function TickTick:renameFolder(group_id)
+    self:showInput{
+        title = _("Folder name"),
+        input = (self.state:readSetting("folder_names") or {})[group_id] or "",
+        hint = _("e.g. Work"),
+        description = _("TickTick does not share folder names with other apps, so name it here. Leave blank for \"Folder\"."),
+        on_save = function(value)
+            value = (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local names = self.state:readSetting("folder_names") or {}
+            names[group_id] = value ~= "" and value or nil
+            self.state:saveSetting("folder_names", names)
+            self.state:flush()
+            self:refreshAll()
+        end,
+    }
+end
+
+--- Your lists in TickTick's order, folders as headers with their lists indented.
+-- `row(project, nested)` builds a list row; folders are skipped when all their lists are.
+-- @return array of rows; folder headers are {folder = group_id, folder_lists = {...}}
+function TickTick:listRows(row, opts)
+    opts = opts or {}
+    local collapsed = opts.collapsible and (self.state:readSetting("collapsed_folders") or {}) or {}
+    local out = {}
+    for i, e in ipairs(Model.orderProjects(self.state:readSetting("projects"))) do
+        if e.list then
+            local r = row(e.list, false)
+            if r then out[#out + 1] = r end
+        else
+            local rows = {}
+            for j, p in ipairs(e.lists) do
+                local r = row(p, true)
+                if r then rows[#rows + 1] = r end
+            end
+            if #rows > 0 then
+                local closed = collapsed[e.folder]
+                out[#out + 1] = {
+                    text = (closed and ICON.folder or ICON.folder_open) .. "  " .. self:folderName(e.folder),
+                    folder = e.folder, folder_rows = rows,
+                    select_enabled = opts.collapsible or false,
+                }
+                if not closed then
+                    for j, r in ipairs(rows) do out[#out + 1] = r end
+                end
+            end
+        end
+    end
+    return out
+end
+
 function TickTick:drawerItems()
     local tasks = self:cachedTasks()
     local now, offset = os.time(), self:offsetMinutes()
@@ -631,17 +700,18 @@ function TickTick:drawerItems()
         if mode.kind ~= "project" then return ICON[mode.kind] end
         return mode.project_id == inbox and ICON.inbox or ICON.list
     end
-    local function row(mode)
+    local function row(mode, nested)
         local n = #Model.visibleTasks(tasks, mode, now, offset, skip, excluded)
         return {
-            text = icon(mode) .. "  " .. self:modeTitle(mode),
-            mandatory = tostring(n),
+            text = (nested and INDENT or "") .. icon(mode) .. "  " .. self:modeTitle(mode),
+            mandatory = tostring(n), count = n,
             bold = sameMode(mode, current) or nil,
             mode = mode,
         }
     end
 
     local items = { { text = ICON.sync .. "  " .. self:syncRowText(), sync_row = true } }
+    items[#items + 1] = { text = ICON.search .. "  " .. _("Search"), action = function() self:promptSearch() end }
     items[#items + 1] = self:noDataRow()
     if inbox then
         items[#items + 1] = row({ kind = "project", project_id = inbox })
@@ -655,18 +725,32 @@ function TickTick:drawerItems()
         items[#items + 1] = row({ kind = kind })
     end
 
-    local any = false
-    for i, p in ipairs(self.state:readSetting("projects") or {}) do
-        if not p.extra and not excluded[p.id] then
-            if not any then
-                items[#items + 1] = { text = _("Lists"), dim = true, select_enabled = false }
-                any = true
+    local lists = self:listRows(function(p, nested)
+        if excluded[p.id] then return nil end
+        return row({ kind = "project", project_id = p.id }, nested)
+    end, { collapsible = true })
+    if #lists > 0 then
+        items[#items + 1] = { text = _("Lists"), dim = true, select_enabled = false }
+        for i, r in ipairs(lists) do
+            if r.folder then -- a folder shows the total of its lists
+                local total = 0
+                for j, fr in ipairs(r.folder_rows) do total = total + fr.count end
+                r.mandatory = tostring(total)
             end
-            items[#items + 1] = row({ kind = "project", project_id = p.id })
+            items[#items + 1] = r
         end
     end
     items[#items + 1] = { text = ICON.settings .. "  " .. _("Settings"), action = function() self:openSettings() end }
     return items
+end
+
+--- Tap a folder: fold or unfold it (remembered).
+function TickTick:toggleFolder(group_id)
+    local collapsed = self.state:readSetting("collapsed_folders") or {}
+    collapsed[group_id] = not collapsed[group_id] or nil
+    self.state:saveSetting("collapsed_folders", collapsed)
+    self.state:flush()
+    self:refreshDrawer()
 end
 
 function TickTick:openDrawer()
@@ -689,9 +773,15 @@ function TickTick:openDrawer()
             elseif item.mode then
                 plugin:closeDrawer()
                 plugin:openList(item.mode)
+            elseif item.folder then
+                plugin:toggleFolder(item.folder)
             elseif item.action then
                 item.action()
             end
+            return true
+        end,
+        onMenuHold = function(menu_self, item)
+            if item.folder then plugin:renameFolder(item.folder) end
             return true
         end,
         close_callback = function()
@@ -751,7 +841,9 @@ end
 --- Open (or switch to) a list of tasks. mode = {kind, project_id?}.
 function TickTick:openList(mode)
     self.mode = mode
-    self.state:saveSetting("last_mode", { kind = mode.kind, project_id = mode.project_id })
+    if mode.kind ~= "search" then -- a search is not worth reopening next time
+        self.state:saveSetting("last_mode", { kind = mode.kind, project_id = mode.project_id })
+    end
     local items, count = self:buildItems(mode)
     local title = self:listTitle(mode, count)
     if self.list_menu then
@@ -857,24 +949,24 @@ end
 --- Pick a list to move a task to: the Inbox and every list you show.
 function TickTick:chooseList(task)
     local excluded = self:excludedProjects()
-    local targets = {}
-    local inbox = self:inboxId()
-    if inbox then targets[#targets + 1] = { id = inbox, name = _("Inbox"), icon = ICON.inbox } end
-    for i, p in ipairs(self.state:readSetting("projects") or {}) do
-        if not p.extra and not excluded[p.id] then
-            targets[#targets + 1] = { id = p.id, name = Model.displayName(p.name), icon = ICON.list }
-        end
-    end
-    local items = {}
-    for i, t in ipairs(targets) do
-        local here = t.id == task.project_id
-        items[#items + 1] = {
-            text = t.icon .. "  " .. t.name,
+    local function target(id, label, nested)
+        local here = id == task.project_id
+        return {
+            text = (nested and INDENT or "") .. label,
             mandatory = here and _("current") or nil,
             bold = here or nil,
             select_enabled = not here,
-            target = t.id,
+            target = id,
         }
+    end
+    local items = {}
+    local inbox = self:inboxId()
+    if inbox then items[#items + 1] = target(inbox, ICON.inbox .. "  " .. _("Inbox")) end
+    for i, r in ipairs(self:listRows(function(p, nested)
+        if excluded[p.id] then return nil end
+        return target(p.id, ICON.list .. "  " .. Model.displayName(p.name), nested)
+    end)) do
+        items[#items + 1] = r
     end
     if #items == 0 then
         UIManager:show(InfoMessage:new{ text = _("Sync once to load your lists.") })
@@ -1049,6 +1141,23 @@ function TickTick:uploadCompletion(position, quiet)
     end
 end
 
+--- Search every task's title, notes and checklist.
+function TickTick:promptSearch()
+    self:showInput{
+        title = _("Search tasks"),
+        input = self.last_query or "",
+        hint = _("Words in a title, notes or checklist"),
+        save_text = _("Search"),
+        on_save = function(value)
+            value = (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if value == "" then return end
+            self.last_query = value
+            self:closeDrawer()
+            self:openList({ kind = "search", query = value })
+        end,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Adding and deleting tasks
 -- ---------------------------------------------------------------------------
@@ -1209,6 +1318,12 @@ function TickTick:detailItems(task)
             action = function() self:toggleChecklistItem(task, item_id) end,
         }
     end
+    if (task.subtasks or 0) > 0 and Model.checklistEditable(task) then
+        items[#items + 1] = {
+            text = ICON.plus .. "  " .. _("Add checklist item"),
+            action = function() self:addChecklistItem(task) end,
+        }
+    end
     items[#items + 1] = {
         text = ICON.check .. "  " .. _("Mark as complete"), bold = true,
         action = function() self:confirmComplete(task) end,
@@ -1276,6 +1391,7 @@ function TickTick:saveEdit(task, fields, quiet)
         return
     end
     local ok, kind, detail = self:flushPending(client)
+    self:refreshDetail() -- the upload may have brought ids for new checklist items
     if not ok then
         UIManager:show(InfoMessage:new{
             text = _("Saved on this device, but not uploaded yet. It will retry on your next sync.\n\n")
@@ -1341,26 +1457,84 @@ function TickTick:toggleChecklistItem(task, item_id)
     self:saveEdit(task, { items = Model.itemsFromChecklist(list) }, true)
 end
 
---- Pick a due date. Timed tasks keep their time of day; only the date changes.
+--- Due date options: date, time, all day, remove.
 function TickTick:editDue(task)
     local offset = self:offsetMinutes()
     local parts = Model.dueParts(task, os.time(), offset)
-    local picker
-    picker = DateTimeWidget:new{
+    local info = Model.dueInfo({ dueDate = task.due, startDate = task.start, isAllDay = task.all_day },
+        os.time(), offset)
+    local dialog
+    local function choice(text, fn)
+        return {{ text = text, callback = function()
+            UIManager:close(dialog)
+            fn()
+        end }}
+    end
+    local buttons = {
+        choice(ICON.calendar .. "  " .. (parts.has_due and _("Change date…") or _("Set date…")),
+            function() self:pickDueDate(task, parts, offset) end),
+        choice(ICON.clock .. "  " .. (parts.hour and _("Change time…") or _("Set a time…")),
+            function() self:pickDueTime(task, parts, offset) end),
+    }
+    if parts.hour then
+        buttons[#buttons + 1] = choice(_("All day (remove the time)"), function()
+            self:saveEdit(task, Model.dueFields(parts.year, parts.month, parts.day, nil, nil, offset))
+        end)
+    end
+    if parts.has_due then
+        buttons[#buttons + 1] = choice(ICON.trash .. "  " .. _("Remove due date"), function()
+            self:saveEdit(task, Model.clearDueFields())
+        end)
+    end
+    dialog = ButtonDialog:new{
+        title = T(_("Due: %1"), info and Model.dueLabel(info) or _("None")),
+        buttons = buttons,
+    }
+    UIManager:show(dialog)
+end
+
+--- Pick the date. A timed task keeps its time of day.
+function TickTick:pickDueDate(task, parts, offset)
+    UIManager:show(DateTimeWidget:new{
         year = parts.year, month = parts.month, day = parts.day,
         title_text = _("Due date"),
         info_text = parts.hour and T(_("Keeps its time, %1"), string.format("%02d:%02d", parts.hour, parts.min)) or nil,
         ok_text = _("Set date"),
-        extra_text = parts.has_due and _("Remove due date") or nil,
-        extra_callback = function()
-            picker:onClose()
-            self:saveEdit(task, Model.clearDueFields())
-        end,
         callback = function(time)
             self:saveEdit(task, Model.dueFields(time.year, time.month, time.day, parts.hour, parts.min, offset))
         end,
+    })
+end
+
+--- Pick a time of day. An undated task gets today's date.
+function TickTick:pickDueTime(task, parts, offset)
+    UIManager:show(DateTimeWidget:new{
+        hour = parts.hour or 9, min = parts.min or 0,
+        title_text = _("Due time"),
+        info_text = T(_("On %1"), string.format("%04d-%02d-%02d", parts.year, parts.month, parts.day)),
+        ok_text = _("Set time"),
+        callback = function(time)
+            self:saveEdit(task, Model.dueFields(parts.year, parts.month, parts.day, time.hour, time.min, offset))
+        end,
+    })
+end
+
+--- Add an item to a task's checklist (only tasks that already have one: turning a
+-- plain task into a checklist changes where TickTick keeps its notes).
+function TickTick:addChecklistItem(task)
+    self:showInput{
+        title = _("New checklist item"),
+        hint = _("Item"),
+        save_text = _("Add"),
+        on_save = function(value)
+            value = (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if value == "" then return end
+            local list = {}
+            for i, it in ipairs(task.checklist or {}) do list[i] = it end
+            list[#list + 1] = { id = newLocalId(), title = value, done = false, status = 0 }
+            self:saveEdit(task, { items = Model.itemsFromChecklist(list) }, true)
+        end,
     }
-    UIManager:show(picker)
 end
 
 function TickTick:editPriority(task)
@@ -1582,22 +1756,21 @@ function TickTick:openSettings()
 end
 
 function TickTick:listsToggleItems()
-    local projects = self.state:readSetting("projects")
     local items = {}
-    for i, p in ipairs(projects or {}) do
-        if not p.extra then
-            local hidden = self:excludedProjects()[p.id]
-            items[#items + 1] = {
-                text = (hidden and "[ ] " or "[x] ") .. Model.displayName(p.name),
-                action = function(refresh)
-                    local excluded = self:excludedProjects()
-                    if excluded[p.id] then excluded[p.id] = nil else excluded[p.id] = true end
-                    self.state:saveSetting("excluded_projects", excluded)
-                    self.state:flush()
-                    refresh()
-                end,
-            }
-        end
+    for i, r in ipairs(self:listRows(function(p, nested)
+        local hidden = self:excludedProjects()[p.id]
+        return {
+            text = (nested and INDENT or "") .. (hidden and ICON.box or ICON.box_done) .. "  " .. Model.displayName(p.name),
+            action = function(refresh)
+                local excluded = self:excludedProjects()
+                if excluded[p.id] then excluded[p.id] = nil else excluded[p.id] = true end
+                self.state:saveSetting("excluded_projects", excluded)
+                self.state:flush()
+                refresh()
+            end,
+        }
+    end)) do
+        items[#items + 1] = r
     end
     if #items == 0 then
         items[1] = { text = _("Sync once to load your lists."), select_enabled = false }

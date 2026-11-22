@@ -58,7 +58,11 @@ function Client:listProjects()
     local out = {}
     for _, p in ipairs(data) do
         if type(p) == "table" and type(p.id) == "string" and p.closed ~= true and p.kind ~= "NOTE" then
-            out[#out + 1] = { id = p.id, name = type(p.name) == "string" and p.name or p.id }
+            out[#out + 1] = {
+                id = p.id, name = type(p.name) == "string" and p.name or p.id,
+                group_id = type(p.groupId) == "string" and p.groupId or nil, -- folder, if any
+                sort_order = type(p.sortOrder) == "number" and p.sortOrder or nil,
+            }
         end
     end
     return out
@@ -99,6 +103,17 @@ end
 function Client:updateTask(project_id, task_id, fields)
     local body = { id = task_id, projectId = project_id }
     for k, v in pairs(fields) do body[k] = v end
+    if type(fields.items) == "table" then
+        -- Checklist items added on the device have a temporary id: send them without one.
+        local items = {}
+        for i, it in ipairs(fields.items) do
+            local copy = {}
+            for k, v in pairs(it) do copy[k] = v end
+            if type(copy.id) == "string" and copy.id:sub(1, 6) == "local:" then copy.id = nil end
+            items[i] = copy
+        end
+        body.items = items
+    end
     return self:request("POST", "/task/" .. task_id, body)
 end
 

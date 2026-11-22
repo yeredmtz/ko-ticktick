@@ -327,5 +327,45 @@ Model.applyFields(tk, { items = api_items })
 eq("applyFields items -> checklist", #tk.checklist, 2)
 eq("applyFields items -> subtasks", tk.subtasks, 2)
 
+-- ---- list order and folders (shaped like a real account) ----
+local real = {
+    { id = "mywork", name = "My Work", group_id = "g1", sort_order = 320690891434 },
+    { id = "personal", name = "Personal", sort_order = -8070451872265207368 },
+    { id = "content", name = "Content", sort_order = -8070451717646384712 },
+    { id = "misc", name = "Miscellaneous", sort_order = -8070451862601530952 },
+    { id = "tcs", name = "TCS", group_id = "g1", sort_order = 366503875924 },
+    { id = "planner", name = "Work.Planner", sort_order = 0 },
+    { id = "newjob", name = "New Job", group_id = "g1", sort_order = 297784399189 },
+    { id = "tech", name = "tech2do", sort_order = 2338609692671 },
+    { id = "inbox1", name = "Inbox", extra = true },
+}
+local order = Model.orderProjects(real)
+local flat = {}
+for i, e in ipairs(order) do
+    if e.list then flat[#flat + 1] = e.list.name
+    else
+        local names = {}
+        for j, p in ipairs(e.lists) do names[#names + 1] = p.name end
+        flat[#flat + 1] = "[" .. table.concat(names, ",") .. "]"
+    end
+end
+eq("sidebar order: by sortOrder, folder where its first list is",
+    table.concat(flat, "|"), "Personal|Miscellaneous|Content|Work.Planner|[New Job,My Work,TCS]|tech2do")
+local old_cache = Model.orderProjects({ { id = "b", name = "B" }, { id = "a", name = "A" }, { id = "c", name = "C" } })
+eq("old cache without sortOrder keeps its order", old_cache[1].list.name .. old_cache[2].list.name .. old_cache[3].list.name, "BAC")
+eq("Inbox is not listed", #Model.orderProjects({ { id = "i", name = "Inbox", extra = true } }), 0)
+
+-- ---- search ----
+local st = { title = "Call the Bank", content = "about the loan", checklist = { { title = "Passport copy" } } }
+check("search: title, any case", Model.matches(st, "bank"))
+check("search: notes", Model.matches(st, "LOAN"))
+check("search: checklist", Model.matches(st, "passport"))
+check("search: no match", not Model.matches(st, "dentist"))
+check("search: empty query matches nothing", not Model.matches(st, ""))
+check("search: special characters are plain text", not Model.matches(st, "b.nk"))
+local searched = Model.visibleTasks({ { id = "1", title = "Bank", status = 0, priority = 0, sort_order = 0 },
+    { id = "2", title = "Milk", status = 0, priority = 0, sort_order = 0 } }, { kind = "search", query = "bank" }, now25, -300)
+eq("search mode filters", #searched, 1)
+
 print(string.format("logic tests: %d passed, %d failed", passed, failures))
 return failures

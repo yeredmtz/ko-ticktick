@@ -334,6 +334,12 @@ local function handle(req)
         assert(req.headers["Content-Length"] == tostring(#body), "update must send an exact Content-Length")
         local fields = json.decode(body)
         assert(fields.id == utid and fields.projectId, "update body needs id and projectId")
+        for i, it in ipairs(type(fields.items) == "table" and fields.items or {}) do
+            if not it.id then -- like TickTick: new checklist items get ids
+                s.next_item = (s.next_item or 0) + 1
+                it.id = "item" .. s.next_item
+            end
+        end
         for i, t in ipairs(s.tasks[fields.projectId] or {}) do
             if t.id == utid then
                 for k, v in pairs(fields) do t[k] = v end

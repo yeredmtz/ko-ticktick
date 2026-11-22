@@ -1,6 +1,6 @@
 # TickTick for KOReader
 
-TickTick on a jailbroken Kindle (KOReader): browse your lists, open tasks, add, edit, move, delete and complete tasks, and tick checklist items.
+TickTick on a jailbroken Kindle (KOReader): browse your lists, open tasks, add, edit, move, delete, search and complete tasks, set due dates and times, and tick or add checklist items.
 
 - Screens open instantly from a cache on the device, and work with Wi-Fi off. Nothing syncs until you tap **Sync now**.
 - Completions and edits made offline are queued and uploaded on the next sync.
@@ -44,16 +44,20 @@ Tip: for zero menu taps, assign a gesture: **Settings → Taps and gestures → 
 
 **Add task:** type a title. In one of your lists it goes into that list. In Today or Tomorrow it goes into the Inbox, due that day; in the other smart lists, into the Inbox with no date. Works offline: it shows at once and uploads on the next sync, and you can edit, move or complete it before then.
 
-**Sidebar:** tap the menu button (three lines, top left) to slide out your lists, like the phone app, each with an icon: Inbox, Today, Tomorrow, Next 7 days, All tasks, then each of your lists, with task counts on the right. The list you are on is in bold. Tap one to switch to it; tap outside the panel to close it. It also has **Sync now** at the top and **Settings** at the bottom.
+**Sidebar:** tap the menu button (three lines, top left) to slide out your lists, like the phone app, each with an icon: Inbox, Today, Tomorrow, Next 7 days, All tasks, then each of your lists, with task counts on the right. The list you are on is in bold. Tap one to switch to it; tap outside the panel to close it. It also has **Sync now** and **Search** at the top and **Settings** at the bottom.
+
+**List order and folders:** lists appear in TickTick's own order. Lists inside a TickTick folder are shown indented under a folder row, which shows their total count. Tap a folder to fold or unfold it. TickTick does not share folder names with other apps, so a folder is called "Folder" until you **hold** it and give it a name (kept on the Kindle).
+
+**Search** looks through every task's title, notes and checklist (any upper/lower case).
 
 **Emoji** in list names and task titles are left out on screen, because the Kindle's fonts cannot draw them (they showed as "?"). They are kept in TickTick: editing a title starts from the full text. (The icons the plugin itself shows come from a symbol font KOReader ships, so those do draw.)
 
 **Task screen:** shows the title (with its checkbox), notes, due date (calendar icon), priority (flag), list and checklist, each with an icon.
 - Tap the **checkbox** to complete the task (with Undo). Tap the rest of the **title** to rename it.
 - Tap **List** to move the task to another list (the Inbox or any list you show).
-- Tap **Due** to pick a date (a timed task keeps its time of day), or **Remove due date**. Tap **Priority** to choose None, Low, Medium or High. Tap **Notes** to edit them in a full-screen editor (Save keeps the editor open, Close leaves it).
+- Tap **Due** for: change the date (a timed task keeps its time), set or change a time, make it all day again, or remove the due date. Tap **Priority** to choose None, Low, Medium or High. Tap **Notes** to edit them in a full-screen editor (Save keeps the editor open, Close leaves it).
 - **Mark as complete** completes the task and returns to the list.
-- Tap a **checklist item** to tick or untick it. When online, the newest checklist is fetched first, so a change made on your phone is kept. Checklists downloaded by an older version need one sync first; checklists over 200 items are not editable here.
+- Tap a **checklist item** to tick or untick it. When online, the newest checklist is fetched first, so a change made on your phone is kept. **Add checklist item** adds to a task that already has a checklist (also offline). Checklists downloaded by an older version need one sync first. A single task with more than 200 checklist items cannot have its checklist edited here (the limit is items inside one task, not tasks in a list).
 
 **Notes and checklists:** TickTick keeps the notes of ordinary tasks in one field and the description of checklist tasks in another. The plugin edits whichever applies, so what you see here is what you see in the phone app.
 
@@ -81,7 +85,7 @@ Tip: for zero menu taps, assign a gesture: **Settings → Taps and gestures → 
 
 ## Not yet tested on a real Kindle
 
-The logic is tested (158 tests), and the full flows are tested against mocked KOReader screens and a fake TickTick server (323 tests): sidebar, lists, task screen, title and notes edits online and offline, merged edits, failed uploads, and the Inbox. The OAuth script is tested against a fake server. What has not been run is the plugin inside real KOReader on a real Kindle, and the real TickTick API. On first run, check:
+The logic is tested (168 tests), and the full flows are tested against mocked KOReader screens and a fake TickTick server (376 tests): sidebar, lists, task screen, title and notes edits online and offline, merged edits, failed uploads, and the Inbox. The OAuth script is tested against a fake server. What has not been run is the plugin inside real KOReader on a real Kindle, and the real TickTick API. On first run, check:
 
 1. **Tools → TickTick** opens a task list. If not, look at `koreader/crash.log`.
 2. Tap **Sync now**; the counts fill in. If it says it could not reach TickTick, check Wi-Fi and the clock.
@@ -90,7 +94,8 @@ The logic is tested (158 tests), and the full flows are tested against mocked KO
 5. Change a throwaway task's due date and priority on the Kindle and check both on your phone. Then **Remove due date** and check it really has none (also not confirmed that the API accepts an empty value).
 6. Move a throwaway task to another list, and to and from the Inbox; check on your phone.
 7. Add a task from Today and from a list, tick a checklist item, and delete a throwaway task; check each on your phone.
-8. "Today" matches what TickTick shows. If it is off by a day around midnight, set the time zone offset (Settings → Time zone).
+8. Sync, then compare the sidebar's list order and folders with the phone app. Set a time on a task's due date and add a checklist item; check both on your phone.
+9. "Today" matches what TickTick shows. If it is off by a day around midnight, set the time zone offset (Settings → Time zone).
 
 If something fails, send me the message on screen and the last lines of `crash.log`.
 
