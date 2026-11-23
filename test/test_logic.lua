@@ -406,5 +406,15 @@ eq("subtask follows its parent; orphans stay top level", table.concat(ids, " "),
 local loop = Model.nestSubtasks({ { task = { id = "a", parent_id = "b" } }, { task = { id = "b", parent_id = "a" } } })
 eq("parent loop loses nothing", #loop, 2)
 
+-- ---- repeat rules in words ----
+eq("daily", Model.repeatLabel("RRULE:FREQ=DAILY;INTERVAL=1"), "Every day")
+eq("every 2 weeks", Model.repeatLabel("RRULE:FREQ=WEEKLY;WKST=MO;INTERVAL=2"), "Every 2 weeks")
+eq("weekly on days", Model.repeatLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TH"), "Every week on Mon, Thu")
+eq("monthly", Model.repeatLabel("RRULE:FREQ=MONTHLY"), "Every month")
+eq("from completion", Model.repeatLabel("RRULE:FREQ=DAILY;INTERVAL=3", "1"), "Every 3 days, after completion")
+eq("custom dates", Model.repeatLabel("ERULE:NAME=CUSTOM;BYDATE=20260325"), "Custom repeat")
+eq("no repeat", Model.repeatLabel(nil), nil)
+eq("slim keeps the rule", Model.slimTask({ id = "r", title = "R", repeatFlag = "RRULE:FREQ=DAILY", repeatFrom = "1" }).repeat_from, "1")
+
 print(string.format("logic tests: %d passed, %d failed", passed, failures))
 return failures

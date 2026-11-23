@@ -354,6 +354,19 @@ local function handle(req)
     if req.method == "POST" and cpid then
         assert(req.headers["Content-Length"] == "0", "complete must send Content-Length: 0")
         if s.not_found[tid] then return out(404) end
+        for i, t in ipairs(s.tasks[cpid] or {}) do
+            if t.id == tid and type(t.repeatFlag) == "string" then
+                -- like TickTick: a repeating task stays open and moves to its next date
+                -- (the fake only knows daily repeats)
+                s.rolled = s.rolled or {}
+                s.rolled[#s.rolled + 1] = tid
+                local y, mo, d, rest = t.dueDate:match("^(%d+)-(%d+)-(%d+)(T.*)$")
+                local next_day = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d) + 1, hour = 12 })
+                t.dueDate = os.date("%Y-%m-%d", next_day) .. rest
+                t.startDate = t.dueDate
+                return out(200)
+            end
+        end
         s.completed[tid] = cpid
         s.completed_order = s.completed_order or {}
         s.completed_order[#s.completed_order + 1] = tid

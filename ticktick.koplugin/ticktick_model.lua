@@ -273,7 +273,37 @@ function Model.slimTask(t, project_name)
         checklist_truncated = list_cut,
         kind = str(t.kind), -- "TEXT" or "CHECKLIST": decides where notes live
         parent_id = str(t.parentId), -- set on subtasks
+        repeat_flag = str(t.repeatFlag), -- e.g. "RRULE:FREQ=WEEKLY;INTERVAL=2"
+        repeat_from = str(t.repeatFrom), -- "1" = repeats from the completion date
     }
+end
+
+local WEEKDAY_NAMES = { MO = "Mon", TU = "Tue", WE = "Wed", TH = "Thu", FR = "Fri", SA = "Sat", SU = "Sun" }
+local FREQ_UNITS = { DAILY = { "day", "days" }, WEEKLY = { "week", "weeks" },
+                     MONTHLY = { "month", "months" }, YEARLY = { "year", "years" } }
+
+--- A repeat rule in plain words ("Every 2 weeks on Mon, Thu"), or nil if the task does not repeat.
+function Model.repeatLabel(flag, from)
+    if type(flag) ~= "string" or flag == "" then return nil end
+    local label
+    local rule = flag:match("^RRULE:(.*)$")
+    if rule then
+        local parts = {}
+        for k, v in rule:gmatch("([A-Z]+)=([^;]*)") do parts[k] = v end
+        local unit = FREQ_UNITS[parts.FREQ or ""]
+        if unit then
+            local n = tonumber(parts.INTERVAL or "1") or 1
+            label = n == 1 and ("Every " .. unit[1]) or ("Every " .. n .. " " .. unit[2])
+            if parts.BYDAY and parts.FREQ == "WEEKLY" then
+                local days = {}
+                for d in parts.BYDAY:gmatch("[A-Z][A-Z]") do days[#days + 1] = WEEKDAY_NAMES[d] or d end
+                if #days > 0 then label = label .. " on " .. table.concat(days, ", ") end
+            end
+        end
+    end
+    label = label or "Custom repeat"
+    if from == "1" then label = label .. ", after completion" end
+    return label
 end
 
 local CHECKLIST_CAP = 200

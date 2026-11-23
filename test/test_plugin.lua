@@ -1004,6 +1004,40 @@ eq("queue empty", #plugin:pendingList(), 0)
 mocks.clearInfos()
 list:close()
 
+-- ---- repeating tasks --------------------------------------------------------------------------------------------
+local rpt = raw("r1", "home", "Water ferns", iso(midnight), true, 0)
+rpt.repeatFlag, rpt.repeatFrom, rpt.startDate = "RRULE:FREQ=DAILY;INTERVAL=1", "2", iso(midnight)
+server.tasks.home[#server.tasks.home + 1] = rpt
+plugin:showHome()
+list = menu()
+side = openDrawer()
+side:tap(drawerIndex(side, "Today"))
+list:tap(1)
+mocks.clearInfos()
+local i_r = taskRow("Water ferns")
+has("list row shows the repeat icon", list.item_table[i_r].mandatory, "\239\128\158 Today")
+list:tap(i_r)
+detail = menu()
+local i_rep = mocks.rowIndex(detail, "\239\128\158  Repeats")
+check("task screen has a Repeats row", i_rep ~= nil)
+eq("repeat rule in words", detail.item_table[i_rep].mandatory, "Every day")
+detail:tap(1, ON_BOX) -- tick it
+local undo_r = mocks.top()
+undo_r.ok_callback()
+closeWidget(undo_r)
+eq("completed through the normal request", server.rolled and server.rolled[#server.rolled], "r1")
+eq("the series is not closed", server.completed["r1"], nil)
+eq("it shows its next date at once (not in Today any more)", taskRow("Water ferns"), nil)
+local cr = plugin:findCachedTask("r1")
+check("still in the cache", cr ~= nil)
+eq("cache has the next date", cr and cr.due, os.date("!%Y-%m-%dT00:00:00.000+0000", midnight + 86400))
+eq("still repeating", cr and cr.repeat_flag, "RRULE:FREQ=DAILY;INTERVAL=1")
+side = openDrawer()
+side:tap(drawerIndex(side, "Tomorrow"))
+check("now in Tomorrow", taskRow("Water ferns") ~= nil)
+mocks.clearInfos()
+list:close()
+
 -- ---- notes ---------------------------------------------------------------------------------------------------
 server.projects[#server.projects + 1] = { id = "notes", name = "Notes", kind = "NOTE", sortOrder = 5 }
 server.tasks.notes = {

@@ -55,6 +55,7 @@ local ICON = {
     search = "\239\128\130",   -- U+F002 search
     clock = "\239\128\151",    -- U+F017 clock-o
     subtask = "\239\133\137",  -- U+F149 level-down
+    ["repeat"] = "\239\128\158", -- U+F01E repeat (KOReader uses it too)
     up = "\239\133\136",       -- U+F148 level-up
     inbox = "\239\128\156",    -- U+F01C inbox
     today = "\239\137\180",    -- U+F274 calendar-check-o
@@ -449,7 +450,22 @@ function TickTick:flushPending(client)
                 ok, kind, detail = client:completeTask(p.project_id, p.task_id)
             end
             if ok then
-                if removesTask(p) then self:dropCachedTask(p.task_id) end
+                local cached = isCompletion(p) and self:findCachedTask(p.task_id)
+                if cached and cached.repeat_flag then
+                    -- A repeating task moves to its next date (verified live): show that now.
+                    local fresh = client:getTask(p.project_id, p.task_id)
+                    if fresh and fresh.id == p.task_id and fresh.status == 0 then
+                        local was_note = cached.is_note
+                        for k in pairs(cached) do cached[k] = nil end
+                        for k, v in pairs(fresh) do cached[k] = v end
+                        cached.project = self:projectName(cached.project_id) or cached.project
+                        cached.is_note = was_note
+                    else
+                        self:dropCachedTask(p.task_id)
+                    end
+                elseif removesTask(p) then
+                    self:dropCachedTask(p.task_id)
+                end
                 if p.op == "update" and p.fields and p.fields.items and type(ok) == "table" and type(ok.items) == "table" then
                     -- TickTick's reply carries ids for checklist items added on the device.
                     local t = self:findCachedTask(p.task_id)
@@ -850,7 +866,7 @@ function TickTick:buildItems(mode)
         items[#items + 1] = {
             text = string.rep(INDENT, r.depth or 0) .. ICON.box .. "  "
                 .. Model.priorityMark(r.task.priority) .. Model.displayName(r.task.title),
-            mandatory = Model.dueLabel(r.info),
+            mandatory = (r.task.repeat_flag and (ICON["repeat"] .. " ") or "") .. Model.dueLabel(r.info),
             bold = r.tier == 0 or nil,
             task = r.task,
         }
@@ -1391,6 +1407,10 @@ function TickTick:detailItems(task)
         text = ICON.calendar .. "  " .. _("Due"), mandatory = info and Model.dueLabel(info) or _("None"),
         action = function() self:editDue(task) end,
     }
+    local repeats = Model.repeatLabel(task.repeat_flag, task.repeat_from)
+    if repeats then
+        items[#items + 1] = { text = ICON["repeat"] .. "  " .. _("Repeats"), mandatory = repeats, select_enabled = false }
+    end
     items[#items + 1] = {
         text = ICON.flag .. "  " .. _("Priority"), mandatory = Model.priorityName(task.priority),
         action = function() self:editPriority(task) end,
