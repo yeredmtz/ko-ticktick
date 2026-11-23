@@ -48,7 +48,11 @@ Tip: for zero menu taps, assign a gesture: **Settings → Taps and gestures → 
 
 **List order and folders:** lists appear in TickTick's own order. Lists inside a TickTick folder are shown indented under a folder row, which shows their total count. Tap a folder to fold or unfold it. TickTick does not share folder names with other apps, so a folder is called "Folder" until you **hold** it and give it a name (kept on the Kindle).
 
-**Search** looks through every task's title, notes and checklist (any upper/lower case).
+**Search** looks through every task's title, notes and checklist, and your notes (any upper/lower case).
+
+**Notes:** TickTick note lists appear in the sidebar with a notes icon. Tap a note to open it in a full-screen editor; hold it to rename, move (to another note list) or delete it; **Add note** creates one and opens it. Notes stay out of Today and the other date lists.
+
+**The editor** (for notes and for task notes) is the one KOReader's own Text Editor uses: it opens for reading, so tap the text to bring up the keyboard; the bottom bar has find and replace, go to line, undo and paging; it can rotate to landscape; **Reset** goes back to the last saved text; and it remembers where you were in each text until KOReader restarts.
 
 **Emoji** in list names and task titles are left out on screen, because the Kindle's fonts cannot draw them (they showed as "?"). They are kept in TickTick: editing a title starts from the full text. (The icons the plugin itself shows come from a symbol font KOReader ships, so those do draw.)
 
@@ -86,7 +90,7 @@ Tip: for zero menu taps, assign a gesture: **Settings → Taps and gestures → 
 
 ## Not yet tested on a real Kindle
 
-The logic is tested (178 tests), and the full flows are tested against mocked KOReader screens and a fake TickTick server (397 tests): sidebar, lists, task screen, title and notes edits online and offline, merged edits, failed uploads, and the Inbox. The OAuth script is tested against a fake server. What has not been run is the plugin inside real KOReader on a real Kindle, and the real TickTick API. On first run, check:
+The logic is tested (184 tests), and the full flows are tested against mocked KOReader screens and a fake TickTick server (432 tests): sidebar, lists, task screen, title and notes edits online and offline, merged edits, failed uploads, and the Inbox. The OAuth script is tested against a fake server. What has not been run is the plugin inside real KOReader on a real Kindle, and the real TickTick API. On first run, check:
 
 1. **Tools → TickTick** opens a task list. If not, look at `koreader/crash.log`.
 2. Tap **Sync now**; the counts fill in. If it says it could not reach TickTick, check Wi-Fi and the clock.

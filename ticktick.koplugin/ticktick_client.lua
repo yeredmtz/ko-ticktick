@@ -50,26 +50,29 @@ function Client:request(method, path, body)
     return Model.fixTextDeep(data) -- emoji: see Model.fixSurrogates
 end
 
---- Open (non-archived, non-note) projects: array of {id, name}.
+--- Open (non-archived) projects: array of {id, name, group_id, sort_order, kind}.
+-- kind is "NOTE" for note lists.
 function Client:listProjects()
     local data, kind, detail = self:request("GET", "/project")
     if not data then return nil, kind, detail end
     if type(data) ~= "table" then return nil, "json", "projects not a list" end
     local out = {}
     for _, p in ipairs(data) do
-        if type(p) == "table" and type(p.id) == "string" and p.closed ~= true and p.kind ~= "NOTE" then
+        if type(p) == "table" and type(p.id) == "string" and p.closed ~= true then
             out[#out + 1] = {
                 id = p.id, name = type(p.name) == "string" and p.name or p.id,
                 group_id = type(p.groupId) == "string" and p.groupId or nil, -- folder, if any
                 sort_order = type(p.sortOrder) == "number" and p.sortOrder or nil,
+                kind = p.kind == "NOTE" and "NOTE" or nil,
             }
         end
     end
     return out
 end
 
---- Undone tasks in one project, as slim tasks.
-function Client:projectTasks(project_id, project_name)
+--- Undone tasks in one project, as slim tasks. Everything in a note list is a note
+-- (TickTick puts some TEXT items there too), and so is any item of kind NOTE.
+function Client:projectTasks(project_id, project_name, project_kind)
     local data, kind, detail = self:request("GET", "/project/" .. project_id .. "/data")
     if not data then return nil, kind, detail end
     local out = {}
@@ -80,6 +83,7 @@ function Client:projectTasks(project_id, project_name)
                 local slim = Model.slimTask(t, project_name)
                 if slim.id then
                     slim.project_id = slim.project_id or project_id
+                    slim.is_note = (project_kind == "NOTE" or slim.kind == "NOTE") or nil
                     out[#out + 1] = slim
                 end
             end
@@ -169,7 +173,7 @@ function Client:fetchAll(skip_ids, extra_ids, progress)
     end
     for i, p in ipairs(todo) do
         if progress then progress(i, #todo) end
-        local pt, k, d = self:projectTasks(p.id, p.name)
+        local pt, k, d = self:projectTasks(p.id, p.name, p.kind)
         if pt then
             for _, t in ipairs(pt) do tasks[#tasks + 1] = t end
         elseif k == "auth" or k == "network" then

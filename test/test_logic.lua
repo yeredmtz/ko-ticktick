@@ -169,20 +169,37 @@ local transport, log = fakeTransport({
     }) },
     ["GET /project/p1/data"] = { 200, json.encode({ tasks = { { id = "t1", projectId = "p1", title = "One", status = 0 } } }) },
     ["GET /project/p4/data"] = { 500, "boom" },
+    ["GET /project/p3/data"] = { 200, json.encode({ tasks = {
+        { id = "n1", projectId = "p3", title = "Recipe", status = 0, kind = "NOTE", content = "flour" },
+        { id = "n2", projectId = "p3", title = "Plain item in a note list", status = 0, kind = "TEXT" } } }) },
     ["GET /project/inbox9/data"] = { 200, json.encode({ tasks = { { id = "t9", title = "In inbox", status = 0 } } }) },
     ["POST /project/p1/task/t1/complete"] = { 200, "" },
 })
 local c = Client:new{ base_url = "https://api.ticktick.com/open/v1/", token = "tok", transport = transport, json = json }
 local projects = c:listProjects()
-eq("closed + notes filtered", #projects, 2)
+eq("closed filtered, note list kept", #projects, 3)
+local note_list
+for i, p in ipairs(projects) do if p.id == "p3" then note_list = p end end
+eq("note list marked", note_list.kind, "NOTE")
 local all, plist, failed = c:fetchAll({}, { "inbox9" })
-eq("fetchAll tasks", all and #all, 2)
+eq("fetchAll tasks", all and #all, 4)
 eq("fetchAll failed count", failed, 1)
-eq("fetchAll inbox project id filled", all and all[2].project_id, "inbox9")
+local notes_seen = 0
+for i, t in ipairs(all) do if t.is_note then notes_seen = notes_seen + 1 end end
+eq("everything in a note list is a note", notes_seen, 2)
+local mixed = { { id = "t", title = "T", status = 0, priority = 0, sort_order = 0, due = nil },
+                { id = "n", title = "N", status = 0, priority = 0, sort_order = 0, is_note = true, project_id = "p3", content = "x" } }
+eq("notes stay out of All tasks", #Model.visibleTasks(mixed, "all", 0, 0), 1)
+eq("notes show in their own list", #Model.visibleTasks(mixed, { kind = "project", project_id = "p3" }, 0, 0), 1)
+eq("notes show in search", #Model.visibleTasks(mixed, { kind = "search", query = "x" }, 0, 0), 1)
+eq("notes edit content", Model.notesField({ is_note = true, kind = "TEXT", subtasks = 2 }), "content")
+local t9
+for i, t in ipairs(all or {}) do if t.id == "t9" then t9 = t end end
+eq("fetchAll inbox project id filled", t9 and t9.project_id, "inbox9")
 eq("auth header", log[1].headers.Authorization, "Bearer tok")
 eq("trailing slash trimmed", log[1].url, "https://api.ticktick.com/open/v1/project")
 local skipped = c:fetchAll({ p4 = true }, {})
-eq("skip project", skipped and #skipped, 1)
+eq("skip project", skipped and #skipped, 3) -- p1 + the two notes; p4 skipped
 eq("complete ok", c:completeTask("p1", "t1"), true)
 local ok, kind, detail = c:completeTask("p1", "nope")
 eq("complete 404 kind", kind, "http")

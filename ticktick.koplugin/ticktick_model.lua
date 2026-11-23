@@ -327,6 +327,7 @@ end
 --- Which API field holds a task's notes: checklist tasks keep them in `desc`,
 -- ordinary tasks in `content`.
 function Model.notesField(task)
+    if task.is_note or task.kind == "NOTE" then return "content" end
     if task.kind == "CHECKLIST" then return "desc" end
     if task.kind == "TEXT" then return "content" end
     if (task.subtasks or 0) > 0 then return "desc" end -- cache from before `kind` was kept
@@ -501,7 +502,9 @@ function Model.visibleTasks(tasks, mode, now, offset_min, skip, excluded)
     if type(mode) == "table" then kind, wanted_project = mode.kind, mode.project_id end
     local out = {}
     for _, t in ipairs(tasks or {}) do
-        if t.id and t.status == 0 and not skip[t.id] and not excluded[t.project_id or ""] then
+        -- Notes only show in their own list and in search, never in date lists.
+        local note_ok = not t.is_note or kind == "project" or kind == "search"
+        if t.id and t.status == 0 and note_ok and not skip[t.id] and not excluded[t.project_id or ""] then
             local info = Model.dueInfo(asDueTask(t), now, offset_min)
             local keep
             if kind == "all" then

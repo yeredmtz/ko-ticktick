@@ -400,9 +400,11 @@ end
 function TickTick:adoptCreatedTask(local_id, created)
     local t = self:findCachedTask(local_id)
     if not t then return end
+    local was_note = t.is_note
     for k in pairs(t) do t[k] = nil end
     for k, v in pairs(created) do t[k] = v end
     t.project = self:projectName(t.project_id) or t.project
+    t.is_note = (was_note or self:projectKind(t.project_id) == "NOTE" or t.kind == "NOTE") or nil
     for i, other in ipairs(self:cachedTasks() or {}) do -- its subtasks now name the real id
         if other.parent_id == local_id then other.parent_id = created.id end
     end
@@ -598,6 +600,13 @@ local SMART_TITLES = {
     today = _("Today"), tomorrow = _("Tomorrow"), week = _("Next 7 days"), all = _("All tasks"),
 }
 
+--- "NOTE" for a note list, else nil.
+function TickTick:projectKind(project_id)
+    for i, p in ipairs(self.state:readSetting("projects") or {}) do
+        if p.id == project_id then return p.kind end
+    end
+end
+
 --- A list's name as TickTick has it ("Inbox" for the Inbox), or nil if unknown.
 function TickTick:projectName(project_id)
     if project_id == self:inboxId() then return "Inbox" end
@@ -705,7 +714,8 @@ function TickTick:drawerItems()
     local inbox = self:inboxId()
     local function icon(mode)
         if mode.kind ~= "project" then return ICON[mode.kind] end
-        return mode.project_id == inbox and ICON.inbox or ICON.list
+        if mode.project_id == inbox then return ICON.inbox end
+        return self:projectKind(mode.project_id) == "NOTE" and ICON.notes or ICON.list
     end
     local function row(mode, nested)
         local n = #Model.visibleTasks(tasks, mode, now, offset, skip, excluded)
@@ -822,13 +832,21 @@ function TickTick:buildItems(mode)
     local rows = Model.visibleTasks(
         self:cachedTasks(), mode, os.time(), self:offsetMinutes(),
         self:pendingCompleteIds(), self:excludedProjects())
+    local note_list = mode.kind == "project" and self:projectKind(mode.project_id) == "NOTE"
     local items = {
         { text = self:syncRowText(), sync_row = true },
-        { text = ICON.plus .. "  " .. _("Add task"), add_row = true },
+        { text = ICON.plus .. "  " .. (note_list and _("Add note") or _("Add task")), add_row = true },
     }
     items[#items + 1] = self:noDataRow()
     rows = Model.nestSubtasks(rows)
     for i, r in ipairs(rows) do
+        if r.task.is_note then -- notes: no checkbox or due label; a first line of text instead
+            items[#items + 1] = {
+                text = ICON.notes .. "  " .. Model.displayName(r.task.title),
+                mandatory = Model.displayName(Model.firstLine(r.task.content, 24)),
+                task = r.task,
+            }
+        else
         items[#items + 1] = {
             text = string.rep(INDENT, r.depth or 0) .. ICON.box .. "  "
                 .. Model.priorityMark(r.task.priority) .. Model.displayName(r.task.title),
@@ -836,6 +854,7 @@ function TickTick:buildItems(mode)
             bold = r.tier == 0 or nil,
             task = r.task,
         }
+        end
     end
     if #rows == 0 and self:cachedTasks() ~= nil then
         items[#items + 1] = { text = _("No tasks here."), select_enabled = false }
@@ -917,6 +936,10 @@ function TickTick:onRowTapped(item, pos)
         self:addTask()
         return
     end
+    if item.task and item.task.is_note then
+        self:editNotes(item.task) -- a note opens straight into the editor
+        return
+    end
     if item.task then
         if onCheckbox(pos) then
             self:completeTask(item.task, { undo = true })
@@ -928,9 +951,31 @@ end
 
 --- Hold a row: a menu of things to do with the task.
 function TickTick:onRowHeld(item)
-    if item.task then
+    if item.task and item.task.is_note then
+        self:showNoteMenu(item.task)
+    elseif item.task then
         self:showTaskMenu(item.task)
     end
+end
+
+function TickTick:showNoteMenu(note)
+    local dialog
+    local function choice(text, fn)
+        return {{ text = text, callback = function()
+            UIManager:close(dialog)
+            fn()
+        end }}
+    end
+    dialog = ButtonDialog:new{
+        title = Model.displayName(note.title),
+        buttons = {
+            choice(ICON.notes .. "  " .. _("Open"), function() self:editNotes(note) end),
+            choice(_("Rename…"), function() self:editTitle(note) end),
+            choice(ICON.list .. "  " .. _("Move to list…"), function() self:chooseList(note) end),
+            choice(ICON.trash .. "  " .. _("Delete…"), function() self:confirmDelete(note) end),
+        },
+    }
+    UIManager:show(dialog)
 end
 
 function TickTick:showTaskMenu(task)
@@ -970,10 +1015,12 @@ function TickTick:chooseList(task)
     end
     local items = {}
     local inbox = self:inboxId()
-    if inbox then items[#items + 1] = target(inbox, ICON.inbox .. "  " .. _("Inbox")) end
+    if inbox and not task.is_note then items[#items + 1] = target(inbox, ICON.inbox .. "  " .. _("Inbox")) end
     for i, r in ipairs(self:listRows(function(p, nested)
         if excluded[p.id] then return nil end
-        return target(p.id, ICON.list .. "  " .. Model.displayName(p.name), nested)
+        -- notes move between note lists, tasks between task lists
+        if (p.kind == "NOTE") ~= (task.is_note == true) then return nil end
+        return target(p.id, (p.kind == "NOTE" and ICON.notes or ICON.list) .. "  " .. Model.displayName(p.name), nested)
     end)) do
         items[#items + 1] = r
     end
@@ -1196,6 +1243,20 @@ function TickTick:addTask()
         return
     end
     local where = Model.displayName(self:projectName(project_id) or "")
+    if self:projectKind(project_id) == "NOTE" then
+        self:showInput{
+            title = T(_("New note in %1"), where),
+            hint = _("Note title"),
+            save_text = _("Add"),
+            on_save = function(value)
+                value = (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                if value == "" then return end
+                local note = self:createTask(value, project_id, nil, { kind = "NOTE" })
+                if note then self:editNotes(note) end -- straight to writing it
+            end,
+        }
+        return
+    end
     self:showInput{
         title = T(_("New task in %1"), where),
         hint = _("Task title"),
@@ -1232,8 +1293,9 @@ function TickTick:createTask(title, project_id, due, extra)
     local task = Model.slimTask({
         id = id, projectId = project_id, title = title, priority = 0, status = 0,
         dueDate = fields.dueDate, startDate = fields.startDate, isAllDay = fields.isAllDay,
-        parentId = fields.parentId,
+        parentId = fields.parentId, kind = fields.kind,
     }, self:projectName(project_id))
+    task.is_note = (self:projectKind(project_id) == "NOTE" or fields.kind == "NOTE") or nil
     local tasks = self:cachedTasks() or {}
     tasks[#tasks + 1] = task
     self.state:saveSetting("tasks", tasks)
@@ -1245,7 +1307,7 @@ function TickTick:createTask(title, project_id, due, extra)
     local client = self:getClient()
     if not client or not NetworkMgr:isOnline() then
         UIManager:show(InfoMessage:new{ text = _("Added on this device. It will upload on your next sync."), timeout = 2 })
-        return
+        return task
     end
     local ok, kind, detail = self:flushPending(client)
     self:refreshAll()
@@ -1257,6 +1319,7 @@ function TickTick:createTask(title, project_id, due, extra)
                 .. self:describeError(kind, detail),
         })
     end
+    return task
 end
 
 function TickTick:confirmDelete(task)
@@ -1613,27 +1676,52 @@ function TickTick:editNotes(task)
     end
     local field = Model.notesField(task)
 
+    -- The same full-screen editor KOReader's Text Editor uses: opens for reading (tap
+    -- the text to type), with find/replace, undo and go-to-line, landscape, and the
+    -- reading position remembered per task.
     local function openEditor(text, label)
         local original = text or ""
         local dialog
+        self.view_pos = self.view_pos or {}
         dialog = InputDialog:new{
             title = label,
             input = original,
             allow_newline = true,
             fullscreen = true,
             condensed = true,
+            cursor_at_end = false,
+            add_nav_bar = true,
             scroll_by_pan = true,
+            rotation_enabled = true,
+            keyboard_visible = false,
+            view_pos_callback = function(top_line_num, charpos)
+                if top_line_num and charpos then
+                    self.view_pos[task.id] = { top_line_num, charpos }
+                elseif self.view_pos[task.id] then
+                    return self.view_pos[task.id][1], self.view_pos[task.id][2]
+                end
+            end,
+            reset_callback = function()
+                return original, _("Text reset to the last saved version.")
+            end,
+            close_callback = function()
+                if dialog.rotation_mode_backup and Screen.getRotationMode
+                        and dialog.rotation_mode_backup ~= Screen:getRotationMode() then
+                    Screen:setRotationMode(dialog.rotation_mode_backup)
+                end
+            end,
             save_callback = function(content, closing)
                 if content ~= original then
                     original = content
-                    self:saveEdit(task, { [field] = content })
+                    self:saveEdit(task, { [field] = content }, true)
+                    return true, NetworkMgr:isOnline() and _("Saved.") or _("Saved on this device. It will upload on your next sync.")
                 end
                 return true
             end,
         }
         UIManager:show(dialog)
-        dialog:onShowKeyboard()
     end
+    local label = task.is_note and Model.displayName(task.title) or _("Notes")
 
     -- Online: start from TickTick's current text, so a newer edit made elsewhere is not overwritten.
     local client = self:getClient()
@@ -1656,11 +1744,11 @@ function TickTick:editNotes(task)
                 })
                 return
             end
-            openEditor(Model.notesOf(task), _("Notes"))
+            openEditor(Model.notesOf(task), label)
             return
         end
     end
-    openEditor(Model.notesOf(task), _("Notes (copy from last sync)"))
+    openEditor(Model.notesOf(task), T(_("%1 (copy from last sync)"), label))
 end
 
 -- ---------------------------------------------------------------------------
